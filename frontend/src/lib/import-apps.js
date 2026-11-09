@@ -16,6 +16,7 @@ import { parseCSV, parseImport, parseWorkoutRows, matchExercise, isNoMatch, impo
 import { EXIDX, canonicalExId } from './exercises.js'
 import { uid } from './format.js'
 import { LIFTOSAUR_EXERCISES } from './liftosaur-exercises.js'
+import { parseGarminCSV } from './import-garmin.js'
 
 const LB_TO_KG = 0.45359237
 const p2 = n => String(n).padStart(2, '0')
@@ -603,6 +604,21 @@ export function parseImportFile(text, opts = {}) {
   if (!/^\s*</.test(s) && !s.includes('HKQuantityTypeIdentifier')) {
     const nl = s.search(/\r?\n/)
     const head = parseCSV(nl < 0 ? s : s.slice(0, nl))[0]?.map(norm) || []
+        const isGarmin = [
+      'activity type',
+      'date',
+      'distance',
+      'time',
+      'avg pace',
+    ].every(name => head.includes(name))
+
+    if (isGarmin) {
+      const parsed = parseGarminCSV(s)
+
+      return parsed.error
+        ? parsed
+        : { ...parsed, kind: 'garmin-preview' }
+    }
     const app = isLiftosaurCsv(head) ? parseLiftosaurCsv : isStrongLifts(head) ? parseStrongLifts : isFitbod(head) ? parseFitbod : null
     if (app) {
       const rows = parseCSV(s)

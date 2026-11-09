@@ -101,6 +101,8 @@ import { copyText } from './lib/clipboard.js'
 import { queueRemaining, pinState } from './lib/queue.js'
 import { DAY_NOTE_TAGS, DAY_NOTE_LABEL, DAY_NOTE_ICON, dayNoteOf, dayNoteLine, canNoteDay, withDayNote } from './lib/day-notes.js'
 import { isOn } from './lib/modules.js'
+import { mergeGarminRuns } from './lib/import-garmin.js'
+import GarminRunDetails from './components/GarminRunDetails.jsx'
 
 const S = () => useStore.getState().S
 const update = (...a) => useStore.getState().update(...a)
@@ -530,6 +532,201 @@ const effortLine = (effort, n, scale) => effort === 'none'
 // the one action where "just try it" is expensive — it's someone's entire training
 // history — so the numbers, the unit conversion and the exercises we couldn't recognise
 // are all on screen before the confirm button.
+function GarminImportPreview({ parsed, close }) {
+  const [confirmed, setConfirmed] = useState(false)
+  const saveRuns = () => {
+    if (!confirmed || !parsed.runs.length) return
+
+    try {
+      let result
+
+      update(state => {
+        result = mergeGarminRuns(state, parsed.runs)
+      })
+
+      close()
+
+      toast(
+        `${result.added} futás hozzáadva, ` +
+        `${result.skipped} már szerepelt az előzményekben.`
+      )
+    } catch (error) {
+      console.error('Garmin mentési hiba:', error)
+      toast(`Nem sikerült az import: ${error.message}`)
+    }
+  }
+  const formatDuration = value => {
+    if (value == null) return '—'
+
+    const total = Math.round(value)
+    const hours = Math.floor(total / 3600)
+    const minutes = Math.floor((total % 3600) / 60)
+    const seconds = String(total % 60).padStart(2, '0')
+
+    return hours > 0
+      ? `${hours}:${String(minutes).padStart(2, '0')}:${seconds}`
+      : `${minutes}:${seconds}`
+  }
+
+  const formatPace = value =>
+    value == null ? '—' : formatDuration(value)
+
+  return (
+    <>
+      <h3>Garmin-futások előnézete</h3>
+
+      <div
+        className="muted small"
+        style={{ marginBottom: 14, lineHeight: 1.5 }}
+      >
+        Ellenőrizd a futásokat, majd az ablak alján erősítsd meg
+        a mértékegységeket. Az adatok csak a Futások importálása
+        gomb megnyomásakor kerülnek az edzéstörténetbe.
+        A távolság és a tempó az exportban szereplő egységekben
+        jelenik meg; a mértékegység megerősítését később adjuk hozzá.
+      </div>
+
+      <div className="tiles" style={{ marginBottom: 14 }}>
+        <div className="tile">
+          <div className="l">Futások</div>
+          <div className="v v-sm">{parsed.runs.length}</div>
+        </div>
+
+        <div className="tile">
+          <div className="l">Hibás sorok</div>
+          <div className="v v-sm">{parsed.issues.length}</div>
+        </div>
+
+        <div className="tile">
+          <div className="l">Más sportág</div>
+          <div className="v v-sm">{parsed.skippedOther}</div>
+        </div>
+      </div>
+
+      <div
+        style={{
+          maxHeight: '50vh',
+          overflowY: 'auto',
+          marginBottom: 16,
+        }}
+      >
+        {parsed.runs.map((run, index) => (
+          <div
+            key={`${run.startedAtLocal}-${index}`}
+            style={{
+              borderBottom: '1px solid var(--sep)',
+              padding: '12px 2px',
+            }}
+          >
+            <div style={{ fontWeight: 600 }}>
+              {run.title}
+            </div>
+
+            <div className="small dim">
+              {run.startedAtLocal}
+              {' · '}
+              {run.activityType === 'Treadmill Running'
+                ? 'Futópad'
+                : 'Szabadtéri futás'}
+            </div>
+
+            <div style={{ marginTop: 6 }}>
+              Táv: {run.distance}
+              {' · '}
+              Idő: {formatDuration(run.durationSeconds)}
+              {' · '}
+              Tempó: {formatPace(run.avgPaceSeconds)}
+            </div>
+
+            <div className="small muted" style={{ marginTop: 4 }}>
+              Átlagpulzus: {run.avgHeartRate ?? '—'}
+              {' · '}
+              Max. pulzus: {run.maxHeartRate ?? '—'}
+            </div>
+
+            <details style={{ marginTop: 8 }}>
+              <summary className="small">
+                Összes eredeti CSV-mező
+              </summary>
+
+              <div
+                className="small"
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
+                  gap: '4px 12px',
+                  marginTop: 8,
+                  overflowWrap: 'anywhere',
+                }}
+              >
+                {Object.entries(run.raw).map(([name, value]) => (
+                  <Fragment key={name}>
+                    <span className="dim">{name}</span>
+                    <span>{value === '' ? '—' : value}</span>
+                  </Fragment>
+                ))}
+              </div>
+            </details>
+          </div>
+        ))}
+
+        {parsed.issues.length > 0 && (
+          <div style={{ marginTop: 12 }}>
+            <h4>Ellenőrizendő sorok</h4>
+
+            {parsed.issues.map((issue, index) => (
+              <div
+                key={`${issue.row}-${index}`}
+                className="small"
+                style={{ marginBottom: 6 }}
+              >
+                {issue.row}. sor: {issue.message}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+            <label
+        className="small"
+        style={{
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: 10,
+          marginBottom: 14,
+          lineHeight: 1.5,
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={confirmed}
+          onChange={event => setConfirmed(event.target.checked)}
+        />
+
+        <span>
+          Megerősítem: a távolság km-ben, a tempó perc/km-ben,
+          a magasság méterben szerepel. Az időpontokat ezen
+          a gépen helyi időként szeretném értelmezni.
+        </span>
+      </label>
+
+      <Button
+        variant="primary"
+        onClick={saveRuns}
+        disabled={!confirmed || !parsed.runs.length}
+      >
+        Futások importálása
+      </Button>
+
+      <div style={{ height: 8 }} />
+
+      <Button variant="ghost" onClick={close}>
+        Mégse
+      </Button>
+    </>
+  )
+}
+  
 function ImportSummary({ parsed, close }) {
   const st = useStore(s => s.S)
   const isBW = parsed.kind === 'bodyweight'
@@ -629,22 +826,78 @@ function ImportSummary({ parsed, close }) {
 /** Read a CSV/XML/JSON export, then show what it would do. */
 export function importFromApp(file, onDone) {
   const rd = new FileReader()
+
   rd.onload = () => {
     let parsed
-    try { parsed = parseImportFile(String(rd.result), { unit: S().unit, customEx: S().customEx }) }
-    catch (e) { toast(t('Could not read that file')); return }
-    if (parsed.error === 'empty') { toast(t('That file is empty')); return }
-    // It looks like that app's export but does not read as one: say so rather than guess.
-    if (parsed.error === 'format') { toast(t('This looks like a {0} export, but we couldn’t read it. Nothing was imported.', parsed.app)); return }
-    if (parsed.error === 'opengym') { toast(t('That’s an openGym backup or plan file. Use Import backup, or import it on the Plan screen.')); return }
-    if (parsed.error) { toast(t("We don't recognise that file's columns. Check the docs for supported apps.")); return }
-    if (parsed.kind === 'bodyweight' ? !parsed.bodyweight.length && !parsed.measurements?.length : !parsed.workouts.length && !parsed.routines?.routines?.length) {
-      toast(t('Nothing to import from that file')); return
+
+    try {
+      parsed = parseImportFile(String(rd.result), {
+        unit: S().unit,
+        customEx: S().customEx,
+      })
+    } catch (e) {
+      console.error('Import feldolgozási hiba:', e)
+      toast(t('Could not read that file'))
+      return
     }
-    ui().openSheet(close => <ImportSummary parsed={parsed} close={close} />)
-    onDone && onDone()
+
+    if (parsed.error === 'empty') {
+      toast(t('That file is empty'))
+      return
+    }
+
+    if (parsed.error === 'format') {
+      toast(t(
+        "This looks like a {0} export, but we couldn't read it. Nothing was imported.",
+        parsed.app
+      ))
+      return
+    }
+
+    if (parsed.error === 'opengym') {
+      toast(t(
+        "That's an openGym backup or plan file. Use Import backup, or import it on the Plan screen."
+      ))
+      return
+    }
+
+    if (parsed.error) {
+      toast(t(
+        "We don't recognise that file's columns. Check the docs for supported apps."
+      ))
+      return
+    }
+
+    // A Garmin-ág minden workouts/bodyweight ellenőrzés ELŐTT van.
+    if (parsed.kind === 'garmin-preview') {
+      ui().openSheet(close => (
+        <GarminImportPreview parsed={parsed} close={close} />
+      ))
+
+      if (onDone) onDone()
+      return
+    }
+
+    const nothingToImport = parsed.kind === 'bodyweight'
+      ? !parsed.bodyweight.length && !parsed.measurements?.length
+      : !parsed.workouts.length && !parsed.routines?.routines?.length
+
+    if (nothingToImport) {
+      toast(t('Nothing to import from that file'))
+      return
+    }
+
+    ui().openSheet(close => (
+      <ImportSummary parsed={parsed} close={close} />
+    ))
+
+    if (onDone) onDone()
   }
-  rd.onerror = () => toast(t('Could not read that file'))
+
+  rd.onerror = () => {
+    toast(t('Could not read that file'))
+  }
+
   rd.readAsText(file)
 }
 
@@ -3255,6 +3508,7 @@ function WorkoutDetail({ w, close }) {
   const grouped = groups.length > 1 || (groups[0] && groups[0].rid && (w.routineIds || []).length > 1)
   return <>
     <h3>{w.name}</h3>
+    <GarminRunDetails workout={w} />
     <div className="muted small" style={{ marginBottom: 12 }}>{[fmtDate(w.d, true), ...durPart(w.end - w.start), fmtVol(sessionVolume(w, st), st.unit), ...(w.bw ? [fmtNum(w.bw) + ' ' + st.unit] : [])].join(' · ')}</div>
     {grouped ? groups.map(g => {
       const r = g.rid ? st.routines.find(x => x.id === g.rid) : null
